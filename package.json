@@ -1,0 +1,23 @@
+{
+  "name": "peer-calling-app",
+  "version": "1.0.9",
+  "description": "A client-side PeerJS and Supabase voice calling application.",
+  "main": "PeerCalling.html",
+  "unpkg": "PeerCalling.html",
+  "files": [
+    " ",
+    "outgoing.mp3",
+    "incoming.mp3"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "peerjs",
+    "supabase",
+    "voice-call",
+    "unpkg"
+  ],
+  "author": "",
+  "license": "ISC"
+}

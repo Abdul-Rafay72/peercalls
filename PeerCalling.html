@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceLink Pro | Secure Audio & Video Gateway</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --accent: #10b981;
+            --danger: #ef4444;
+            --info: #3b82f6;
+            --text: #f8fafc;
+            --muted: #64748b;
+        }
+
+        body {
+            margin: 0; font-family: 'Segoe UI', Arial, sans-serif;
+            background: var(--bg); color: var(--text); overflow: hidden;
+            display: flex; justify-content: center; align-items: center; height: 100vh;
+        }
+
+        .container { width: 100%; max-width: 950px; height: 100vh; display: flex; position: relative; background: var(--bg); }
+        
+        #login-panel { display: flex; flex-direction: column; justify-content: center; align-items: center; width: 100%; max-width: 420px; margin: 0 auto; padding: 40px; text-align: center; }
+        #app-panel { display: none; width: 100%; height: 100%; }
+
+        /* Multi-Pane App Frame Layout */
+        .sidebar { width: 320px; background: #111827; border-right: 1px solid #334155; display: flex; flex-direction: column; height: 100%; }
+        .main-content { flex: 1; display: flex; flex-direction: column; height: 100%; background: var(--bg); }
+
+        .pane-header { background: var(--card); padding: 15px 20px; font-weight: bold; font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+        .list-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+
+        /* Input Controls and Action Assets */
+        input { width: 100%; padding: 14px; background: var(--card); border: 1px solid #334155; border-radius: 10px; color: white; margin-bottom: 12px; font-size: 15px; box-sizing: border-box; }
+        button { padding: 14px; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; transition: 0.2s ease; }
+        .primary-btn { width: 100%; background: var(--accent); color: white; margin-bottom: 10px; }
+        .secondary-btn { width: 100%; background: transparent; color: var(--info); border: 1px solid var(--info); }
+        .danger-btn { background: var(--danger); color: white; padding: 6px 12px; font-size: 12px; }
+
+        .user-card { background: var(--card); border-radius: 12px; padding: 14px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #334155; }
+        .call-btn { background: var(--info); color: white; padding: 8px 16px; border-radius: 6px; font-size: 13px; }
+
+        /* Call History Ledger Row Component */
+        .history-card { background: #1e293b50; border-radius: 8px; padding: 12px; font-size: 13px; border-left: 4px solid var(--muted); display: flex; flex-direction: column; gap: 5px; }
+        .history-card.CONNECTED { border-left-color: var(--accent); }
+        .history-card.MISSED { border-left-color: var(--danger); }
+        .history-card.REJECTED { border-left-color: #f59e0b; }
+        .history-meta { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; }
+
+        /* Signal Call State Window Overlays */
+        .overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(15, 23, 42, 0.98); z-index: 9999; flex-direction: column; 
+            justify-content: center; align-items: center; text-align: center;
+        }
+        .avatar { width: 100px; height: 100px; background: var(--card); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 40px; margin-bottom: 20px; border: 3px solid var(--accent); }
+        .ringing { animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16,185,129,0.4); } 70% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(16,185,129,0); } 100% { transform: scale(1); } }
+        
+        .timer { font-size: 48px; margin: 20px 0; font-family: monospace; color: var(--accent); z-index: 10; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+        .action-btns { display: flex; gap: 20px; z-index: 10; }
+        .round-btn { width: 70px; height: 70px; border-radius: 50%; font-size: 24px; display: flex; justify-content: center; align-items: center; }
+        #status-bar { background: #334155; font-size: 11px; text-align: center; padding: 4px; color: #94a3b8; font-weight: bold; width: 100%; position: absolute; top: 0; left: 0; z-index: 10; }
+
+        /* Video Display Elements */
+        .video-viewport-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; display: flex; justify-content: center; align-items: center; background: #000; }
+        #remoteVideoRenderer { width: 100%; height: 100%; object-fit: cover; }
+        #localVideoRenderer { position: absolute; top: 30px; right: 20px; width: 140px; height: 180px; background: #111827; border: 2px solid var(--info); border-radius: 12px; object-fit: cover; z-index: 5; transform: scaleX(-1); }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div id="status-bar">CONNECTING...</div>
+
+        <!-- Authentication View Window -->
+        <div id="login-panel">
+            <h1 style="font-size: 36px; margin: 0 0 5px 0; color: var(--info);">VoiceLink Pro</h1>
+            <p style="color: #94a3b8; margin-bottom: 25px; font-size: 14px;">Real-Time Two-Way Video Gateway</p>
+            <input id="username" type="text" placeholder="Username" autocomplete="off">
+            <input id="password" type="password" placeholder="Password">
+            <button class="primary-btn" onclick="processAuth('LOGIN')">Log In</button>
+            <button class="secondary-btn" onclick="processAuth('REGISTER')">Create Account</button>
+        </div>
+
+        <!-- Main Application Dashboard View Layout -->
+        <div id="app-panel">
+            <!-- Left Side: Interactive Historical Logs -->
+            <div class="sidebar">
+                <div class="pane-header">Call Log Ledger</div>
+                <div id="history-box" class="list-container">
+                    <div style="color: var(--muted); font-size:12px; text-align:center; padding-top:20px;">No historical entries</div>
+                </div>
+            </div>
+
+            <!-- Right Side: Active User Tracking Directory -->
+            <div class="main-content" style="padding-top: 23px;">
+                <header style="background: var(--card); padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155;">
+                    <div id="me-label" style="font-weight: bold; color: var(--info); font-size: 16px;">@---</div>
+                    <button class="danger-btn" onclick="logout()">Logout</button>
+                </header>
+                <div class="pane-header" style="background: transparent;">Available Online Users</div>
+                <div id="users-box" class="list-container"></div>
+            </div>
+        </div>
+
+        <!-- Window Overlay Intermediaries -->
+        <div id="outgoingOverlay" class="overlay">
+            <div class="avatar ringing" style="border-color: var(--info);">📡</div>
+            <h1>Calling Peer...</h1>
+            <h2 id="outgoingTargetName" style="color: var(--info);">User</h2>
+            <div class="action-btns"><button class="round-btn" style="background:var(--danger);" onclick="endCall('MISSED')">✕</button></div>
+        </div>
+
+        <div id="incomingOverlay" class="overlay">
+            <div class="avatar ringing">📞</div>
+            <h1>Incoming Call</h1>
+            <h2 id="callerID" style="color: var(--accent);">User</h2>
+            <div class="action-btns">
+                <button class="round-btn" style="background:var(--danger);" onclick="uiReject()">✕</button>
+                <button class="round-btn" style="background:var(--accent);" onclick="uiAnswer()">✓</button>
+            </div>
+        </div>
+
+        <!-- Full Canvas Video Call Overlay Dashboard -->
+        <div id="activeCallOverlay" class="overlay" style="background: transparent;">
+            <div class="video-viewport-container">
+                <video id="remoteVideoRenderer" autoplay playsinline></video>
+                <video id="localVideoRenderer" autoplay muted playsinline></video>
+            </div>
+            
+            <h2 id="activeUserName" style="z-index:10; position:absolute; top:30px; left:20px; margin:0; background:rgba(15,23,42,0.6); padding:8px 16px; border-radius:8px;">Connected</h2>
+            <div id="callTimer" class="timer">00:00</div>
+            
+            <div class="action-btns">
+                <button id="muteBtn" class="round-btn" style="background:#475569;" onclick="toggleMute()">🎤</button>
+                <button class="round-btn" style="background:var(--danger); width: 80px; height: 80px;" onclick="endCall('CONNECTED')">🛑</button>
+                <button id="videoToggleBtn" class="round-btn" style="background:#475569;" onclick="toggleVideoFeed()">📷</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = "https://xbvcdtvjeunbamobivpe.supabase.co";
+        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhidmNkdHZqZXVuYmFtb2JpdnBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MzE0NjgsImV4cCI6MjA4ODQwNzQ2OH0.epzWcz1TZzleu22POM2fpGTU6PbUeAqlWlkDBLtQVHM";
+        const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let myUser = localStorage.getItem("voice_user_v3");
+        let peer, currentCall, localStream, pendingCall, timerInterval, realtimeChannel, heartbeatInterval;
+        let seconds = 0, isMuted = false, isVideoStopped = false, callIsOutbound = false, activeRemotePeer = "";
+
+        const inTone = new Audio("incoming.mp3"); inTone.loop = true;
+        const outTone = new Audio("outgoing.mp3"); outTone.loop = true;
+
+        // Auto-boot if session exists
+        window.addEventListener('DOMContentLoaded', () => {
+            if (myUser) {
+                startApp();
+            } else {
+                updateStatus("LOGIN REQUIRED", "#64748b");
+            }
+        });
+
+        // Kill peer socket instantly when closing tab to prevent ghosts
+        window.addEventListener('beforeunload', () => {
+            if (peer) peer.destroy();
+        });
+
+        async function processAuth(type) {
+            const u = document.getElementById("username").value.trim().toLowerCase();
+            const p = document.getElementById("password").value.trim();
+
+            if (u.length < 3 || p.length < 4) return alert("Credentials too short (User: min 3, Pass: min 4 chars)");
+
+            if (type === 'REGISTER') {
+                const { data: exist } = await db.from("users").select("username").eq("username", u).maybeSingle();
+                if (exist) return alert("Username already taken!");
+                
+                await db.from("users").insert({ username: u, password: p });
+                alert("Registration complete! Access granted.");
+            } else {
+                const { data: profile } = await db.from("users").select("*").eq("username", u).maybeSingle();
+                if (!profile || profile.password !== p) return alert("Invalid Username or Password combination.");
+            }
+
+            localStorage.setItem("voice_user_v3", u);
+            myUser = u;
+            startApp();
+        }
+
+        async function startApp() {
+            document.getElementById("login-panel").style.display = "none";
+            document.getElementById("app-panel").style.display = "flex";
+            document.getElementById("me-label").innerText = "@" + myUser;
+            updateStatus("SYNCHRONIZING PROFILE...", "#3b82f6");
+
+            // FIXED: Force immediate database injection BEFORE syncing directories
+            try {
+                await db.from("online_users").upsert({ 
+                    username: myUser, 
+                    last_seen: new Date().toISOString() 
+                });
+                
+                // Now safely spawn directories knowing the profile exists
+                initPeerEngine();
+                await loadOnlineDirectory();
+                await loadCallHistoryTable();
+                initRealtimeEngine();
+
+                // Setup looping heartbeat
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = setInterval(() => {
+                    if (myUser) {
+                        db.from("online_users").upsert({ 
+                            username: myUser, 
+                            last_seen: new Date().toISOString() 
+                        });
+                    }
+                }, 2000);
+
+            } catch (err) {
+                console.error("Initialization failure:", err);
+                updateStatus("DATABASE CONNECTION ERROR", "#ef4444");
+            }
+        }
+
+        async function logout() {
+            clearInterval(heartbeatInterval);
+            if (myUser) await db.from("online_users").delete().eq("username", myUser);
+            if (peer) peer.destroy();
+            localStorage.removeItem("voice_user_v3");
+            location.reload();
+        }
+
+        function initRealtimeEngine() {
+            if (realtimeChannel) realtimeChannel.unsubscribe();
+            
+            realtimeChannel = db.channel('instant-sync')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'online_users' }, () => loadOnlineDirectory())
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_history' }, () => loadCallHistoryTable())
+                .subscribe();
+        }
+
+        async function loadOnlineDirectory() {
+            const cutoff = new Date(Date.now() - (5 * 60 * 1000)).toISOString();
+            const { data, error } = await db.from("online_users").select("*").gte("last_seen", cutoff);
+            
+            if (error) return console.error("Directory sync exception:", error);
+
+            const box = document.getElementById("users-box");
+            box.innerHTML = "";
+            const peers = data ? data.filter(u => u.username !== myUser) : [];
+            
+            if (peers.length === 0) {
+                box.innerHTML = `<div style="color:var(--muted); font-size:13px; text-align:center; padding-top:20px;">No other users are currently online</div>`;
+                return;
+            }
+
+            peers.forEach(u => {
+                const div = document.createElement("div");
+                div.className = "user-card";
+                div.innerHTML = `<span>🟢 ${u.username}</span><button class="call-btn" onclick="makeCall('${u.username}')">VIDEO CALL</button>`;
+                box.appendChild(div);
+            });
+        }
+
+        async function loadCallHistoryTable() {
+            const { data } = await db.from("call_history")
+                .select("*")
+                .or(`caller_username.eq.${myUser},receiver_username.eq.${myUser}`)
+                .order('created_at', { ascending: false })
+                .limit(15);
+
+            const box = document.getElementById("history-box");
+            box.innerHTML = "";
+            
+            if(!data || data.length === 0) {
+                box.innerHTML = `<div style="color:var(--muted); font-size:12px; text-align:center; padding-top:20px;">No historical entries</div>`;
+                return;
+            }
+
+            data.forEach(item => {
+                const isCaller = item.caller_username === myUser;
+                const targetLabel = isCaller ? `To: @${item.receiver_username}` : `From: @${item.caller_username}`;
+                const arrowIndicator = isCaller ? '↗️' : '↙️';
+                const parsedTime = new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+                const div = document.createElement("div");
+                div.className = `history-card ${item.status}`;
+                div.innerHTML = `
+                    <div style="font-weight:bold; display:flex; justify-content:space-between;">
+                        <span>${arrowIndicator} ${targetLabel}</span>
+                        <span style="font-size:11px; opacity:0.85;">${item.status}</span>
+                    </div>
+                    <div class="history-meta">
+                        <span>Time: ${item.duration}</span>
+                        <span>${parsedTime}</span>
+                    </div>
+                `;
+                box.appendChild(div);
+            });
+        }
+
+        function initPeerEngine() {
+            if (peer) peer.destroy();
+            
+            peer = new Peer(myUser);
+            
+            peer.on("open", () => updateStatus("REALTIME SIGNAL ROUTER ACTIVE", "#10b981"));
+            
+            peer.on("call", call => {
+                if (currentCall || pendingCall) {
+                    call.answer(); 
+                    call.close();
+                    return;
+                }
+                pendingCall = call;
+                callIsOutbound = false;
+                activeRemotePeer = call.peer;
+                inTone.play().catch(() => {});
+                document.getElementById("callerID").innerText = "@" + call.peer;
+                document.getElementById("incomingOverlay").style.display = "flex";
+            });
+
+            // Handle ghost connection collisions smoothly
+            peer.on("error", err => {
+                console.error("PeerJS Core Error Engine:", err.type);
+                if (err.type === 'id-taken' || err.type === 'unavailable-id') {
+                    updateStatus("RESOLVING CONFLICT...", "#f59e0b");
+                    setTimeout(() => initPeerEngine(), 1500); 
+                }
+            });
+        }
+
+        async function makeCall(target) {
+            try {
+                updateStatus("CALLING...", "#3b82f6");
+                callIsOutbound = true;
+                activeRemotePeer = target;
+                document.getElementById("outgoingTargetName").innerText = "@" + target;
+                document.getElementById("outgoingOverlay").style.display = "flex";
+                
+                outTone.play().catch(() => {});
+                
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                document.getElementById("localVideoRenderer").srcObject = localStream;
+                
+                const call = peer.call(target, localStream);
+                setupCallHandlers(call, target);
+            } catch (e) { 
+                alert("Failed to grab physical media device streams."); 
+                endCall("MISSED");
+            }
+        }
+
+        function setupCallHandlers(call, target) {
+            currentCall = call;
+            
+            call.on("stream", stream => {
+                stopAudioTones();
+                document.getElementById("outgoingOverlay").style.display = "none";
+                document.getElementById("incomingOverlay").style.display = "none";
+                
+                document.getElementById("activeUserName").innerText = "@" + target;
+                document.getElementById("activeCallOverlay").style.display = "flex";
+                
+                document.getElementById("remoteVideoRenderer").srcObject = stream;
+                runTimer();
+                updateStatus("IN VIDEO CALL", "#10b981");
+            });
+
+            if(call.peerConnection) {
+                call.peerConnection.oniceconnectionstatechange = () => {
+                    const state = call.peerConnection.iceConnectionState;
+                    if(state === "disconnected" || state === "failed" || state === "closed") {
+                        endCall("CONNECTED");
+                    }
+                };
+            }
+
+            call.on("close", () => endCall("CONNECTED"));
+            call.on("error", () => endCall("CONNECTED"));
+        }
+
+        async function uiAnswer() {
+            if (!pendingCall) return;
+            document.getElementById("incomingOverlay").style.display = "none";
+            stopAudioTones();
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                document.getElementById("localVideoRenderer").srcObject = localStream;
+                
+                const workingCall = pendingCall;
+                pendingCall = null;
+                
+                workingCall.answer(localStream);
+                setupCallHandlers(workingCall, workingCall.peer);
+            } catch(e) {
+                console.error("Camera stream fallback error:", e);
+                uiReject();
+            }
+        }
+
+        async function uiReject() {
+            document.getElementById("incomingOverlay").style.display = "none";
+            stopAudioTones();
+            if (pendingCall) {
+                await db.from("call_history").insert({
+                    caller_username: pendingCall.peer,
+                    receiver_username: myUser,
+                    status: 'REJECTED',
+                    duration: '00:00'
+                });
+                pendingCall.close();
+                pendingCall = null;
+            }
+            updateStatus("READY", "#94a3b8");
+        }
+
+        function toggleMute() {
+            if (!localStream) return;
+            isMuted = !isMuted;
+            localStream.getAudioTracks()[0].enabled = !isMuted;
+            const btn = document.getElementById("muteBtn");
+            btn.innerText = isMuted ? "🔇" : "🎤";
+            btn.style.background = isMuted ? "white" : "#475569";
+            btn.style.color = isMuted ? "black" : "white";
+        }
+
+        function toggleVideoFeed() {
+            if (!localStream) return;
+            isVideoStopped = !isVideoStopped;
+            localStream.getVideoTracks()[0].enabled = !isVideoStopped;
+            const btn = document.getElementById("videoToggleBtn");
+            btn.innerText = isVideoStopped ? "❌📹" : "📷";
+            btn.style.background = isVideoStopped ? "white" : "#475569";
+            btn.style.color = isVideoStopped ? "black" : "white";
+        }
+
+        async function endCall(resolutionState) {
+            stopAudioTones();
+            clearInterval(timerInterval);
+            
+            const elapsed = document.getElementById("callTimer").innerText;
+            
+            if (activeRemotePeer) {
+                const finalCaller = callIsOutbound ? myUser : activeRemotePeer;
+                const finalReceiver = callIsOutbound ? activeRemotePeer : myUser;
+                
+                await db.from("call_history").insert({
+                    caller_username: finalCaller,
+                    receiver_username: finalReceiver,
+                    status: resolutionState,
+                    duration: elapsed
+                });
+                activeRemotePeer = "";
+            }
+
+            if (currentCall) {
+                currentCall.close();
+                currentCall = null;
+            }
+            if (pendingCall) {
+                pendingCall.close();
+                pendingCall = null;
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                localStream = null;
+            }
+            
+            document.getElementById("remoteVideoRenderer").srcObject = null;
+            document.getElementById("localVideoRenderer").srcObject = null;
+            
+            document.getElementById("outgoingOverlay").style.display = "none";
+            document.getElementById("incomingOverlay").style.display = "none";
+            document.getElementById("activeCallOverlay").style.display = "none";
+            
+            isMuted = false;
+            isVideoStopped = false;
+            
+            document.getElementById("muteBtn").innerText = "🎤";
+            document.getElementById("muteBtn").style.background = "#475569";
+            document.getElementById("muteBtn").style.color = "white";
+            
+            document.getElementById("videoToggleBtn").innerText = "📷";
+            document.getElementById("videoToggleBtn").style.background = "#475569";
+            document.getElementById("videoToggleBtn").style.color = "white";
+
+            updateStatus("READY", "#94a3b8");
+        }
+
+        function runTimer() {
+            clearInterval(timerInterval); seconds = 0;
+            document.getElementById("callTimer").innerText = "00:00";
+            timerInterval = setInterval(() => {
+                seconds++;
+                const m = Math.floor(seconds/60).toString().padStart(2,'0');
+                const s = (seconds%60).toString().padStart(2,'0');
+                document.getElementById("callTimer").innerText = m + ":" + s;
+            }, 1000);
+        }
+
+        function stopAudioTones() {
+            [inTone, outTone].forEach(t => { t.pause(); t.currentTime = 0; });
+        }
+
+        function updateStatus(txt, col) {
+            const s = document.getElementById("status-bar");
+            s.innerText = txt; s.style.color = col;
+        }
+    </script>
+</body>
+</html>
