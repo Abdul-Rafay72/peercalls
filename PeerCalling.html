@@ -114,8 +114,8 @@
         <!-- Window Overlay Intermediaries -->
         <div id="outgoingOverlay" class="overlay">
             <div class="avatar ringing" style="border-color: var(--info);">📡</div>
-            <h1>Calling Peer...</h1>
-            <h2 id="outgoingTargetName" style="color: var(--info);">User</h2>
+            <h1 id="outgoingProgressLabel">Calling...</h1>
+            <h2 id="outgoingTargetName" style="color: var(--info); display: none;">User</h2>
             <div class="action-btns"><button class="round-btn" style="background:var(--danger);" onclick="endCall('MISSED')">✕</button></div>
         </div>
 
@@ -153,13 +153,12 @@
         const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         let myUser = localStorage.getItem("voice_user_v3");
-        let peer, currentCall, localStream, pendingCall, timerInterval, realtimeChannel, heartbeatInterval;
+        let peer, currentCall, localStream, pendingCall, timerInterval, realtimeChannel, heartbeatInterval, directoryPollInterval;
         let seconds = 0, isMuted = false, isVideoStopped = false, callIsOutbound = false, activeRemotePeer = "";
 
         const inTone = new Audio("incoming.mp3"); inTone.loop = true;
         const outTone = new Audio("outgoing.mp3"); outTone.loop = true;
 
-        // Auto-boot if session exists
         window.addEventListener('DOMContentLoaded', () => {
             if (myUser) {
                 startApp();
@@ -168,7 +167,6 @@
             }
         });
 
-        // Kill peer socket instantly when closing tab to prevent ghosts
         window.addEventListener('beforeunload', () => {
             if (peer) peer.destroy();
         });
@@ -201,20 +199,18 @@
             document.getElementById("me-label").innerText = "@" + myUser;
             updateStatus("SYNCHRONIZING PROFILE...", "#3b82f6");
 
-            // FIXED: Force immediate database injection BEFORE syncing directories
             try {
                 await db.from("online_users").upsert({ 
                     username: myUser, 
                     last_seen: new Date().toISOString() 
                 });
                 
-                // Now safely spawn directories knowing the profile exists
                 initPeerEngine();
                 await loadOnlineDirectory();
                 await loadCallHistoryTable();
                 initRealtimeEngine();
 
-                // Setup looping heartbeat
+                // Heartbeat to notify database that we are alive
                 clearInterval(heartbeatInterval);
                 heartbeatInterval = setInterval(() => {
                     if (myUser) {
@@ -225,6 +221,12 @@
                     }
                 }, 2000);
 
+                // FIXED: Poll database directory every 4 seconds to catch and wipe idle dropouts dynamically
+                clearInterval(directoryPollInterval);
+                directoryPollInterval = setInterval(() => {
+                    loadOnlineDirectory();
+                }, 4000);
+
             } catch (err) {
                 console.error("Initialization failure:", err);
                 updateStatus("DATABASE CONNECTION ERROR", "#ef4444");
@@ -233,6 +235,7 @@
 
         async function logout() {
             clearInterval(heartbeatInterval);
+            clearInterval(directoryPollInterval);
             if (myUser) await db.from("online_users").delete().eq("username", myUser);
             if (peer) peer.destroy();
             localStorage.removeItem("voice_user_v3");
@@ -245,19 +248,50 @@
             realtimeChannel = db.channel('instant-sync')
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'online_users' }, () => loadOnlineDirectory())
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_history' }, () => loadCallHistoryTable())
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_signals', filter: `receiver=eq.${myUser}` }, (payload) => {
+                    if (payload.new.type === 'REJECT') {
+                        handleRemoteRejection();
+                    }
+                })
                 .subscribe();
         }
 
+        function handleRemoteRejection() {
+            stopAudioTones();
+            document.getElementById("outgoingOverlay").style.display = "none";
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                localStream = null;
+            }
+            if (currentCall) {
+                currentCall.close();
+                currentCall = null;
+            }
+            activeRemotePeer = "";
+            updateStatus("CALL REJECTED", "#ef4444");
+            setTimeout(() => updateStatus("READY", "#94a3b8"), 2500);
+        }
+
         async function loadOnlineDirectory() {
-            const cutoff = new Date(Date.now() - (5 * 60 * 1000)).toISOString();
+            // Cutoff threshold is 8 seconds back to strictly screen out dropped peer instances
+            const cutoff = new Date(Date.now() - (8 * 1000)).toISOString();
             const { data, error } = await db.from("online_users").select("*").gte("last_seen", cutoff);
             
             if (error) return console.error("Directory sync exception:", error);
 
             const box = document.getElementById("users-box");
-            box.innerHTML = "";
-            const peers = data ? data.filter(u => u.username !== myUser) : [];
             
+            // Generate basic array signature to check if rendering list update is needed (avoids flickering)
+            const peers = data ? data.filter(u => u.username !== myUser) : [];
+            const newSignature = peers.map(u => u.username).sort().join(",");
+            const oldSignature = box.getAttribute("data-peers-signature") || "";
+
+            if (newSignature === oldSignature && box.innerHTML !== "") {
+                return; // Content matches perfectly, skip reflow cycle
+            }
+            box.setAttribute("data-peers-signature", newSignature);
+
+            box.innerHTML = "";
             if (peers.length === 0) {
                 box.innerHTML = `<div style="color:var(--muted); font-size:13px; text-align:center; padding-top:20px;">No other users are currently online</div>`;
                 return;
@@ -312,7 +346,6 @@
             if (peer) peer.destroy();
             
             peer = new Peer(myUser);
-            
             peer.on("open", () => updateStatus("REALTIME SIGNAL ROUTER ACTIVE", "#10b981"));
             
             peer.on("call", call => {
@@ -329,7 +362,6 @@
                 document.getElementById("incomingOverlay").style.display = "flex";
             });
 
-            // Handle ghost connection collisions smoothly
             peer.on("error", err => {
                 console.error("PeerJS Core Error Engine:", err.type);
                 if (err.type === 'id-taken' || err.type === 'unavailable-id') {
@@ -341,10 +373,11 @@
 
         async function makeCall(target) {
             try {
-                updateStatus("CALLING...", "#3b82f6");
+                updateStatus(`CALLING @${target.toUpperCase()}...`, "#3b82f6");
                 callIsOutbound = true;
                 activeRemotePeer = target;
-                document.getElementById("outgoingTargetName").innerText = "@" + target;
+                
+                document.getElementById("outgoingProgressLabel").innerText = "Calling " + target + "...";
                 document.getElementById("outgoingOverlay").style.display = "flex";
                 
                 outTone.play().catch(() => {});
@@ -411,13 +444,23 @@
         async function uiReject() {
             document.getElementById("incomingOverlay").style.display = "none";
             stopAudioTones();
+            
             if (pendingCall) {
+                const targetCaller = pendingCall.peer;
+                
+                await db.from("call_signals").insert({
+                    sender: myUser,
+                    receiver: targetCaller,
+                    type: 'REJECT'
+                });
+
                 await db.from("call_history").insert({
-                    caller_username: pendingCall.peer,
+                    caller_username: targetCaller,
                     receiver_username: myUser,
                     status: 'REJECTED',
                     duration: '00:00'
                 });
+                
                 pendingCall.close();
                 pendingCall = null;
             }
@@ -468,7 +511,7 @@
                 currentCall = null;
             }
             if (pendingCall) {
-                pendingCall.close();
+                currentCall.close(); // Clean up core tracks
                 pendingCall = null;
             }
             if (localStream) {
