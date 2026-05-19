@@ -45,13 +45,11 @@
         .danger-btn { background: var(--danger); color: white; padding: 6px 12px; font-size: 12px; }
 
         .user-card { background: var(--card); border-radius: 12px; padding: 14px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #334155; }
-        .call-btn { background: var(--info); color: white; padding: 8px 16px; border-radius: 6px; font-size: 13px; }
+        .call-btn { color: white; padding: 8px 16px; border-radius: 6px; font-size: 13px; }
 
         /* Call History Ledger Row Component */
         .history-card { background: #1e293b50; border-radius: 8px; padding: 12px; font-size: 13px; border-left: 4px solid var(--muted); display: flex; flex-direction: column; gap: 5px; }
         .history-card.CONNECTED { border-left-color: var(--accent); }
-        .history-card.MISSED { border-left-color: var(--danger); }
-        .history-card.REJECTED { border-left-color: #f59e0b; }
         .history-meta { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; }
 
         /* Signal Call State Window Overlays */
@@ -61,7 +59,7 @@
             justify-content: center; align-items: center; text-align: center;
         }
         
-        .timer { font-size: 48px; margin: 20px 0; font-family: monospace; color: var(--accent); z-index: 10; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+        .timer { font-size: 24px; font-family: monospace; color: var(--accent); z-index: 10; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
         .action-btns { display: flex; gap: 20px; z-index: 10; padding: 20px 0; }
         .round-btn { width: 70px; height: 70px; border-radius: 50%; font-size: 24px; display: flex; justify-content: center; align-items: center; }
         #status-bar { background: #334155; font-size: 11px; text-align: center; padding: 4px; color: #94a3b8; font-weight: bold; width: 100%; position: absolute; top: 0; left: 0; z-index: 10; }
@@ -86,7 +84,7 @@
         <!-- Authentication View Window -->
         <div id="login-panel">
             <h1 style="font-size: 36px; margin: 0 0 5px 0; color: var(--info);">VoiceLink Pro</h1>
-            <p style="color: #94a3b8; margin-bottom: 25px; font-size: 14px;">Real-Time Multi-Party Group Gateway</p>
+            <p style="color: #94a3b8; margin-bottom: 25px; font-size: 14px;">Real-Time Unified Communications Gateway</p>
             <input id="username" type="text" placeholder="Username" autocomplete="off">
             <input id="password" type="password" placeholder="Password">
             <button class="primary-btn" onclick="processAuth('LOGIN')">Log In</button>
@@ -121,12 +119,12 @@
             </div>
         </div>
 
-        <!-- Group Call Canvas Overlay -->
+        <!-- Unified Interactive WebRTC Media Grid Canvas Overlay -->
         <div id="activeCallOverlay" class="overlay" style="justify-content: flex-end; background: #0b0f19;">
             <!-- Target for runtime creation of video panes -->
             <div id="groupVideoGrid" class="video-grid-canvas"></div>
             
-            <div id="callTimer" class="timer" style="position: absolute; top: 10px; right: 20px; margin: 0; font-size: 24px;">00:00</div>
+            <div id="callTimer" class="timer" style="position: absolute; top: 10px; right: 20px; margin: 0;">00:00</div>
             
             <div class="action-btns">
                 <button id="muteBtn" class="round-btn" style="background:#475569;" onclick="toggleMute()">🎤</button>
@@ -146,7 +144,7 @@
         let seconds = 0, isMuted = false, isVideoStopped = false;
         let currentRoomId = null;
         
-        // Tracks active connections: { peerId: peerJsCallInstance }
+        // Tracks active peer connections within the mesh node matrix
         const activeGroupCalls = {}; 
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -206,7 +204,8 @@
                     if (myUser) {
                         db.from("online_users").upsert({ 
                             username: myUser, 
-                            last_seen: new Date().toISOString() 
+                            last_seen: new Date().toISOString(),
+                            current_room: currentRoomId
                         });
                     }
                 }, 2000);
@@ -249,7 +248,7 @@
 
             const box = document.getElementById("users-box");
             const peers = data ? data.filter(u => u.username !== myUser) : [];
-            const newSignature = peers.map(u => u.username).sort().join(",");
+            const newSignature = peers.map(u => `${u.username}:${u.current_room || 'idle'}`).sort().join(",");
             const oldSignature = box.getAttribute("data-peers-signature") || "";
 
             if (newSignature === oldSignature && box.innerHTML !== "") return;
@@ -264,7 +263,34 @@
             peers.forEach(u => {
                 const div = document.createElement("div");
                 div.className = "user-card";
-                div.innerHTML = `<span>🟢 ${u.username}</span><span style="color: var(--muted); font-size: 12px;">Use top bar to sync</span>`;
+                
+                if (u.current_room) {
+                    const isPrivate = u.current_room.startsWith("priv-");
+                    const labelText = isPrivate ? "In Private Call" : `In Room: ${u.current_room}`;
+                    const btnText = isPrivate ? "Call Direct" : "Join Room";
+                    const btnBg = isPrivate ? "var(--accent)" : "var(--info)";
+                    const clickAction = isPrivate ? `startPrivateCall('${u.username}')` : `joinSpecificGroup('${u.current_room}')`;
+
+                    div.innerHTML = `
+                        <div>
+                            <span style="color: var(--info);">🔵 @${u.username}</span>
+                            <div style="color: var(--muted); font-size: 11px; margin-top: 2px;">${labelText}</div>
+                        </div>
+                        <button class="call-btn" style="background: ${btnBg};" onclick="${clickAction}">
+                            ${btnText}
+                        </button>
+                    `;
+                } else {
+                    div.innerHTML = `
+                        <div>
+                            <span style="color: var(--accent);">🟢 @${u.username}</span>
+                            <div style="color: var(--muted); font-size: 11px; margin-top: 2px;">Available to chat</div>
+                        </div>
+                        <button class="call-btn" style="background: var(--accent);" onclick="startPrivateCall('${u.username}')">
+                            Call Direct
+                        </button>
+                    `;
+                }
                 box.appendChild(div);
             });
         }
@@ -286,13 +312,17 @@
 
             data.forEach(item => {
                 const isRoom = item.receiver_username.startsWith("room_");
-                const targetLabel = isRoom ? `Group Room: ${item.receiver_username.replace("room_", "")}` : `To: @${item.receiver_username}`;
+                const isPrivate = item.receiver_username.startsWith("priv-");
+                let targetLabel = `To: @${item.receiver_username}`;
+                
+                if (isRoom) targetLabel = `Group Room: ${item.receiver_username.replace("room_", "")}`;
+                if (isPrivate) targetLabel = `1-on-1 Call System`;
                 
                 const div = document.createElement("div");
                 div.className = `history-card CONNECTED`;
                 div.innerHTML = `
                     <div style="font-weight:bold; display:flex; justify-content:space-between;">
-                        <span>👥 ${targetLabel}</span>
+                        <span>📞 ${targetLabel}</span>
                         <span style="font-size:11px; opacity:0.85;">SESSION</span>
                     </div>
                     <div class="history-meta">
@@ -309,7 +339,6 @@
             peer = new Peer(myUser);
             peer.on("open", () => updateStatus("REALTIME SIGNAL ROUTER ACTIVE", "#10b981"));
             
-            // Handle incoming calls from group mesh members
             peer.on("call", call => {
                 if (!currentRoomId || !localStream) {
                     call.answer();
@@ -317,41 +346,47 @@
                     return;
                 }
                 
-                // Answer automatically because membership validation occurred via broadcast channel
                 call.answer(localStream);
-                
-                call.on("stream", remoteStream => {
-                    attachVideoPane(call.peer, remoteStream);
-                });
-
+                call.on("stream", remoteStream => attachVideoPane(call.peer, remoteStream));
                 call.on("close", () => removeVideoPane(call.peer));
                 activeGroupCalls[call.peer] = call;
             });
         }
 
-        /* Group Room Core Mesh Protocols */
+        /* 1-on-1 Interaction Router */
+        function startPrivateCall(targetUsername) {
+            // Generates a deterministically sorted room identifier signature based on credentials
+            const privateRoomId = "priv-" + [myUser, targetUsername].sort().join("-");
+            joinSpecificGroup(privateRoomId);
+        }
+
+        function joinSpecificGroup(roomId) {
+            document.getElementById('roomInput').value = roomId;
+            joinGroupRoom();
+        }
+
+        /* Core Unified Broadcast Matrix Protocols */
         async function joinGroupRoom() {
             const rInput = document.getElementById("roomInput").value.trim().toLowerCase();
-            if (!rInput) return alert("Please enter a valid room configuration descriptor.");
+            if (!rInput) return alert("Please enter a valid configuration space designator.");
 
             currentRoomId = rInput;
-            updateStatus(`CONNECTING TO ROOM: ${currentRoomId.toUpperCase()}...`, "#3b82f6");
+            const statusLabel = currentRoomId.startsWith("priv-") ? "PRIVATE CHAT MATRIX" : `ROOM: ${currentRoomId.toUpperCase()}`;
+            updateStatus(`CONNECTING TO ${statusLabel}...`, "#3b82f6");
 
             try {
-                // Initialize camera hardware locally
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
                 document.getElementById("activeCallOverlay").style.display = "flex";
                 
-                // Append local frame window setup
                 attachVideoPane(myUser, localStream, true);
                 runTimer();
 
-                // Setup broadcast socket channel tracking for the room
-                groupRoomChannel = db.channel(`room_${currentRoomId}`);
-                
+                // Explicitly bind the online session row instance out into the global scope context
+                await db.from("online_users").upsert({ username: myUser, last_seen: new Date().toISOString(), current_room: currentRoomId });
+
+                groupRoomChannel = db.channel(`mesh_${currentRoomId}`);
                 groupRoomChannel
                     .on('broadcast', { event: 'join-announcement' }, (payload) => {
-                        // A new user has announced entry. If it isn't us, dial their peer node.
                         if (payload.payload.username !== myUser && !activeGroupCalls[payload.payload.username]) {
                             dialMeshNode(payload.payload.username);
                         }
@@ -363,7 +398,6 @@
                     })
                     .subscribe(async (status) => {
                         if (status === 'SUBSCRIBED') {
-                            // Announce presence immediately to everyone inside
                             await groupRoomChannel.send({
                                 type: 'broadcast',
                                 event: 'join-announcement',
@@ -372,7 +406,6 @@
                         }
                     });
 
-                // Periodically announce self to ensure newly arrived users capture our thread topology
                 activeGroupCalls["_pingInterval"] = setInterval(() => {
                     groupRoomChannel.send({
                         type: 'broadcast',
@@ -381,11 +414,11 @@
                     });
                 }, 3000);
 
-                updateStatus(`IN ROOM: ${currentRoomId.toUpperCase()}`, "#10b981");
+                updateStatus(`CONNECTED TO ${statusLabel}`, "#10b981");
 
             } catch (e) {
                 console.error(e);
-                alert("Failed to establish video context profiles.");
+                alert("Failed to secure active multimedia tracking hardware context pipelines.");
                 leaveGroupRoom();
             }
         }
@@ -396,15 +429,12 @@
             const call = peer.call(targetPeerId, localStream);
             activeGroupCalls[targetPeerId] = call;
 
-            call.on("stream", remoteStream => {
-                attachVideoPane(targetPeerId, remoteStream);
-            });
+            call.on("stream", remoteStream => attachVideoPane(targetPeerId, remoteStream));
             call.on("close", () => removeVideoPane(targetPeerId));
             call.on("error", () => removeVideoPane(targetPeerId));
         }
 
         function attachVideoPane(peerId, stream, isLocal = false) {
-            // Ensure no duplicate video wrappers exist for this peer
             if (document.getElementById(`vid-wrapper-${peerId}`)) return;
 
             const grid = document.getElementById("groupVideoGrid");
@@ -416,7 +446,7 @@
             video.srcObject = stream;
             video.autoplay = true;
             video.playsInline = true;
-            if (isLocal) video.muted = true; // Avoid feedback loops from local microphone
+            if (isLocal) video.muted = true; 
 
             const label = document.createElement("div");
             label.className = "peer-tag";
@@ -437,18 +467,21 @@
             clearInterval(timerInterval);
             if (activeGroupCalls["_pingInterval"]) clearInterval(activeGroupCalls["_pingInterval"]);
 
-            // Save historical footprint meta log trace
             if (currentRoomId && seconds > 0) {
                 const elapsed = document.getElementById("callTimer").innerText;
+                const dbRoomName = currentRoomId.startsWith("priv-") ? currentRoomId : `room_${currentRoomId}`;
                 await db.from("call_history").insert({
                     caller_username: myUser,
-                    receiver_username: `room_${currentRoomId}`,
+                    receiver_username: dbRoomName,
                     status: 'CONNECTED',
                     duration: elapsed
                 });
             }
 
-            // Teardown network sockets, streams and elements
+            if (myUser) {
+                await db.from("online_users").upsert({ username: myUser, last_seen: new Date().toISOString(), current_room: null });
+            }
+
             if (groupRoomChannel) groupRoomChannel.unsubscribe();
             
             Object.keys(activeGroupCalls).forEach(peerId => {
@@ -464,6 +497,7 @@
 
             document.getElementById("groupVideoGrid").innerHTML = "";
             document.getElementById("activeCallOverlay").style.display = "none";
+            document.getElementById("roomInput").value = "";
             
             currentRoomId = null;
             seconds = 0;
