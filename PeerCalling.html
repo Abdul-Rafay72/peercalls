@@ -60,19 +60,22 @@
             background: rgba(15, 23, 42, 0.98); z-index: 9999; flex-direction: column; 
             justify-content: center; align-items: center; text-align: center;
         }
-        .avatar { width: 100px; height: 100px; background: var(--card); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 40px; margin-bottom: 20px; border: 3px solid var(--accent); }
-        .ringing { animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16,185,129,0.4); } 70% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(16,185,129,0); } 100% { transform: scale(1); } }
         
         .timer { font-size: 48px; margin: 20px 0; font-family: monospace; color: var(--accent); z-index: 10; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
-        .action-btns { display: flex; gap: 20px; z-index: 10; }
+        .action-btns { display: flex; gap: 20px; z-index: 10; padding: 20px 0; }
         .round-btn { width: 70px; height: 70px; border-radius: 50%; font-size: 24px; display: flex; justify-content: center; align-items: center; }
         #status-bar { background: #334155; font-size: 11px; text-align: center; padding: 4px; color: #94a3b8; font-weight: bold; width: 100%; position: absolute; top: 0; left: 0; z-index: 10; }
 
-        /* Video Display Elements */
-        .video-viewport-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; display: flex; justify-content: center; align-items: center; background: #000; }
-        #remoteVideoRenderer { width: 100%; height: 100%; object-fit: cover; }
-        #localVideoRenderer { position: absolute; top: 30px; right: 20px; width: 140px; height: 180px; background: #111827; border: 2px solid var(--info); border-radius: 12px; object-fit: cover; z-index: 5; transform: scaleX(-1); }
+        /* Dynamic Grid Layout for Group Video Feeds */
+        .video-grid-canvas { 
+            position: absolute; top: 0; left: 0; width: 100%; height: calc(100% - 120px); 
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
+            gap: 15px; padding: 20px; box-sizing: border-box; background: #000; overflow-y: auto;
+        }
+        .video-wrapper { position: relative; background: #111827; border-radius: 12px; overflow: hidden; border: 2px solid #334155; height: 100%; min-height: 200px; }
+        .video-wrapper video { width: 100%; height: 100%; object-fit: cover; }
+        .video-wrapper.local-feed video { transform: scaleX(-1); }
+        .peer-tag { position: absolute; bottom: 10px; left: 10px; background: rgba(15, 23, 42, 0.75); padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: bold; color: white; }
     </style>
 </head>
 <body>
@@ -83,7 +86,7 @@
         <!-- Authentication View Window -->
         <div id="login-panel">
             <h1 style="font-size: 36px; margin: 0 0 5px 0; color: var(--info);">VoiceLink Pro</h1>
-            <p style="color: #94a3b8; margin-bottom: 25px; font-size: 14px;">Real-Time Two-Way Video Gateway</p>
+            <p style="color: #94a3b8; margin-bottom: 25px; font-size: 14px;">Real-Time Multi-Party Group Gateway</p>
             <input id="username" type="text" placeholder="Username" autocomplete="off">
             <input id="password" type="password" placeholder="Password">
             <button class="primary-btn" onclick="processAuth('LOGIN')">Log In</button>
@@ -100,48 +103,34 @@
                 </div>
             </div>
 
-            <!-- Right Side: Active User Tracking Directory -->
+            <!-- Right Side: Room Management & Directory -->
             <div class="main-content" style="padding-top: 23px;">
                 <header style="background: var(--card); padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155;">
                     <div id="me-label" style="font-weight: bold; color: var(--info); font-size: 16px;">@---</div>
                     <button class="danger-btn" onclick="logout()">Logout</button>
                 </header>
+                
+                <!-- Group Call Room Creation Toolbar -->
+                <div style="background: var(--card); padding: 15px; border-bottom: 1px solid #334155; display: flex; gap: 10px;">
+                    <input id="roomInput" type="text" placeholder="Enter Room ID (e.g., lounge)" style="margin-bottom: 0; flex: 1; padding: 10px;">
+                    <button class="primary-btn" style="width: auto; margin-bottom: 0; padding: 10px 20px;" onclick="joinGroupRoom()">JOIN ROOM</button>
+                </div>
+
                 <div class="pane-header" style="background: transparent;">Available Online Users</div>
                 <div id="users-box" class="list-container"></div>
             </div>
         </div>
 
-        <!-- Window Overlay Intermediaries -->
-        <div id="outgoingOverlay" class="overlay">
-            <div class="avatar ringing" style="border-color: var(--info);">📡</div>
-            <h1 id="outgoingProgressLabel">Calling...</h1>
-            <h2 id="outgoingTargetName" style="color: var(--info); display: none;">User</h2>
-            <div class="action-btns"><button class="round-btn" style="background:var(--danger);" onclick="endCall('MISSED')">✕</button></div>
-        </div>
-
-        <div id="incomingOverlay" class="overlay">
-            <div class="avatar ringing">📞</div>
-            <h1>Incoming Call</h1>
-            <h2 id="callerID" style="color: var(--accent);">User</h2>
-            <div class="action-btns">
-                <button class="round-btn" style="background:var(--danger);" onclick="uiReject()">✕</button>
-                <button class="round-btn" style="background:var(--accent);" onclick="uiAnswer()">✓</button>
-            </div>
-        </div>
-
-        <!-- Full Canvas Video Call Overlay Dashboard -->
-        <div id="activeCallOverlay" class="overlay" style="background: transparent;">
-            <div class="video-viewport-container">
-                <video id="remoteVideoRenderer" autoplay playsinline></video>
-                <video id="localVideoRenderer" autoplay muted playsinline></video>
-            </div>
+        <!-- Group Call Canvas Overlay -->
+        <div id="activeCallOverlay" class="overlay" style="justify-content: flex-end; background: #0b0f19;">
+            <!-- Target for runtime creation of video panes -->
+            <div id="groupVideoGrid" class="video-grid-canvas"></div>
             
-            <h2 id="activeUserName" style="z-index:10; position:absolute; top:30px; left:20px; margin:0; background:rgba(15,23,42,0.6); padding:8px 16px; border-radius:8px;">Connected</h2>
-            <div id="callTimer" class="timer">00:00</div>
+            <div id="callTimer" class="timer" style="position: absolute; top: 10px; right: 20px; margin: 0; font-size: 24px;">00:00</div>
             
             <div class="action-btns">
                 <button id="muteBtn" class="round-btn" style="background:#475569;" onclick="toggleMute()">🎤</button>
-                <button class="round-btn" style="background:var(--danger); width: 80px; height: 80px;" onclick="endCall('CONNECTED')">🛑</button>
+                <button class="round-btn" style="background:var(--danger); width: 80px; height: 80px;" onclick="leaveGroupRoom()">🛑</button>
                 <button id="videoToggleBtn" class="round-btn" style="background:#475569;" onclick="toggleVideoFeed()">📷</button>
             </div>
         </div>
@@ -153,11 +142,12 @@
         const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         let myUser = localStorage.getItem("voice_user_v3");
-        let peer, currentCall, localStream, pendingCall, timerInterval, realtimeChannel, heartbeatInterval, directoryPollInterval;
-        let seconds = 0, isMuted = false, isVideoStopped = false, callIsOutbound = false, activeRemotePeer = "";
-
-        const inTone = new Audio("incoming.mp3"); inTone.loop = true;
-        const outTone = new Audio("outgoing.mp3"); outTone.loop = true;
+        let peer, localStream, timerInterval, realtimeChannel, heartbeatInterval, directoryPollInterval, groupRoomChannel;
+        let seconds = 0, isMuted = false, isVideoStopped = false;
+        let currentRoomId = null;
+        
+        // Tracks active connections: { peerId: peerJsCallInstance }
+        const activeGroupCalls = {}; 
 
         window.addEventListener('DOMContentLoaded', () => {
             if (myUser) {
@@ -168,6 +158,7 @@
         });
 
         window.addEventListener('beforeunload', () => {
+            leaveGroupRoom();
             if (peer) peer.destroy();
         });
 
@@ -210,7 +201,6 @@
                 await loadCallHistoryTable();
                 initRealtimeEngine();
 
-                // Heartbeat to notify database that we are alive
                 clearInterval(heartbeatInterval);
                 heartbeatInterval = setInterval(() => {
                     if (myUser) {
@@ -221,7 +211,6 @@
                     }
                 }, 2000);
 
-                // FIXED: Poll database directory every 4 seconds to catch and wipe idle dropouts dynamically
                 clearInterval(directoryPollInterval);
                 directoryPollInterval = setInterval(() => {
                     loadOnlineDirectory();
@@ -234,6 +223,7 @@
         }
 
         async function logout() {
+            leaveGroupRoom();
             clearInterval(heartbeatInterval);
             clearInterval(directoryPollInterval);
             if (myUser) await db.from("online_users").delete().eq("username", myUser);
@@ -248,59 +238,33 @@
             realtimeChannel = db.channel('instant-sync')
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'online_users' }, () => loadOnlineDirectory())
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_history' }, () => loadCallHistoryTable())
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_signals', filter: `receiver=eq.${myUser}` }, (payload) => {
-                    if (payload.new.type === 'REJECT') {
-                        handleRemoteRejection();
-                    }
-                })
                 .subscribe();
         }
 
-        function handleRemoteRejection() {
-            stopAudioTones();
-            document.getElementById("outgoingOverlay").style.display = "none";
-            if (localStream) {
-                localStream.getTracks().forEach(t => t.stop());
-                localStream = null;
-            }
-            if (currentCall) {
-                currentCall.close();
-                currentCall = null;
-            }
-            activeRemotePeer = "";
-            updateStatus("CALL REJECTED", "#ef4444");
-            setTimeout(() => updateStatus("READY", "#94a3b8"), 2500);
-        }
-
         async function loadOnlineDirectory() {
-            // Cutoff threshold is 8 seconds back to strictly screen out dropped peer instances
             const cutoff = new Date(Date.now() - (8 * 1000)).toISOString();
             const { data, error } = await db.from("online_users").select("*").gte("last_seen", cutoff);
             
             if (error) return console.error("Directory sync exception:", error);
 
             const box = document.getElementById("users-box");
-            
-            // Generate basic array signature to check if rendering list update is needed (avoids flickering)
             const peers = data ? data.filter(u => u.username !== myUser) : [];
             const newSignature = peers.map(u => u.username).sort().join(",");
             const oldSignature = box.getAttribute("data-peers-signature") || "";
 
-            if (newSignature === oldSignature && box.innerHTML !== "") {
-                return; // Content matches perfectly, skip reflow cycle
-            }
+            if (newSignature === oldSignature && box.innerHTML !== "") return;
             box.setAttribute("data-peers-signature", newSignature);
 
             box.innerHTML = "";
             if (peers.length === 0) {
-                box.innerHTML = `<div style="color:var(--muted); font-size:13px; text-align:center; padding-top:20px;">No other users are currently online</div>`;
+                box.innerHTML = `<div style="color:var(--muted); font-size:13px; text-align:center; padding-top:20px;">No other users are online</div>`;
                 return;
             }
 
             peers.forEach(u => {
                 const div = document.createElement("div");
                 div.className = "user-card";
-                div.innerHTML = `<span>🟢 ${u.username}</span><button class="call-btn" onclick="makeCall('${u.username}')">VIDEO CALL</button>`;
+                div.innerHTML = `<span>🟢 ${u.username}</span><span style="color: var(--muted); font-size: 12px;">Use top bar to sync</span>`;
                 box.appendChild(div);
             });
         }
@@ -316,26 +280,23 @@
             box.innerHTML = "";
             
             if(!data || data.length === 0) {
-                box.innerHTML = `<div style="color:var(--muted); font-size:12px; text-align:center; padding-top:20px;">No historical entries</div>`;
+                box.innerHTML = `<div style="color:var(--muted); font-size:12px; text-align:center; padding-top:20px;">No entries</div>`;
                 return;
             }
 
             data.forEach(item => {
-                const isCaller = item.caller_username === myUser;
-                const targetLabel = isCaller ? `To: @${item.receiver_username}` : `From: @${item.caller_username}`;
-                const arrowIndicator = isCaller ? '↗️' : '↙️';
-                const parsedTime = new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-
+                const isRoom = item.receiver_username.startsWith("room_");
+                const targetLabel = isRoom ? `Group Room: ${item.receiver_username.replace("room_", "")}` : `To: @${item.receiver_username}`;
+                
                 const div = document.createElement("div");
-                div.className = `history-card ${item.status}`;
+                div.className = `history-card CONNECTED`;
                 div.innerHTML = `
                     <div style="font-weight:bold; display:flex; justify-content:space-between;">
-                        <span>${arrowIndicator} ${targetLabel}</span>
-                        <span style="font-size:11px; opacity:0.85;">${item.status}</span>
+                        <span>👥 ${targetLabel}</span>
+                        <span style="font-size:11px; opacity:0.85;">SESSION</span>
                     </div>
                     <div class="history-meta">
-                        <span>Time: ${item.duration}</span>
-                        <span>${parsedTime}</span>
+                        <span>Duration: ${item.duration}</span>
                     </div>
                 `;
                 box.appendChild(div);
@@ -348,122 +309,174 @@
             peer = new Peer(myUser);
             peer.on("open", () => updateStatus("REALTIME SIGNAL ROUTER ACTIVE", "#10b981"));
             
+            // Handle incoming calls from group mesh members
             peer.on("call", call => {
-                if (currentCall || pendingCall) {
-                    call.answer(); 
+                if (!currentRoomId || !localStream) {
+                    call.answer();
                     call.close();
                     return;
                 }
-                pendingCall = call;
-                callIsOutbound = false;
-                activeRemotePeer = call.peer;
-                inTone.play().catch(() => {});
-                document.getElementById("callerID").innerText = "@" + call.peer;
-                document.getElementById("incomingOverlay").style.display = "flex";
-            });
+                
+                // Answer automatically because membership validation occurred via broadcast channel
+                call.answer(localStream);
+                
+                call.on("stream", remoteStream => {
+                    attachVideoPane(call.peer, remoteStream);
+                });
 
-            peer.on("error", err => {
-                console.error("PeerJS Core Error Engine:", err.type);
-                if (err.type === 'id-taken' || err.type === 'unavailable-id') {
-                    updateStatus("RESOLVING CONFLICT...", "#f59e0b");
-                    setTimeout(() => initPeerEngine(), 1500); 
-                }
+                call.on("close", () => removeVideoPane(call.peer));
+                activeGroupCalls[call.peer] = call;
             });
         }
 
-        async function makeCall(target) {
+        /* Group Room Core Mesh Protocols */
+        async function joinGroupRoom() {
+            const rInput = document.getElementById("roomInput").value.trim().toLowerCase();
+            if (!rInput) return alert("Please enter a valid room configuration descriptor.");
+
+            currentRoomId = rInput;
+            updateStatus(`CONNECTING TO ROOM: ${currentRoomId.toUpperCase()}...`, "#3b82f6");
+
             try {
-                updateStatus(`CALLING @${target.toUpperCase()}...`, "#3b82f6");
-                callIsOutbound = true;
-                activeRemotePeer = target;
-                
-                document.getElementById("outgoingProgressLabel").innerText = "Calling " + target + "...";
-                document.getElementById("outgoingOverlay").style.display = "flex";
-                
-                outTone.play().catch(() => {});
-                
+                // Initialize camera hardware locally
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                document.getElementById("localVideoRenderer").srcObject = localStream;
-                
-                const call = peer.call(target, localStream);
-                setupCallHandlers(call, target);
-            } catch (e) { 
-                alert("Failed to grab physical media device streams."); 
-                endCall("MISSED");
-            }
-        }
-
-        function setupCallHandlers(call, target) {
-            currentCall = call;
-            
-            call.on("stream", stream => {
-                stopAudioTones();
-                document.getElementById("outgoingOverlay").style.display = "none";
-                document.getElementById("incomingOverlay").style.display = "none";
-                
-                document.getElementById("activeUserName").innerText = "@" + target;
                 document.getElementById("activeCallOverlay").style.display = "flex";
                 
-                document.getElementById("remoteVideoRenderer").srcObject = stream;
+                // Append local frame window setup
+                attachVideoPane(myUser, localStream, true);
                 runTimer();
-                updateStatus("IN VIDEO CALL", "#10b981");
+
+                // Setup broadcast socket channel tracking for the room
+                groupRoomChannel = db.channel(`room_${currentRoomId}`);
+                
+                groupRoomChannel
+                    .on('broadcast', { event: 'join-announcement' }, (payload) => {
+                        // A new user has announced entry. If it isn't us, dial their peer node.
+                        if (payload.payload.username !== myUser && !activeGroupCalls[payload.payload.username]) {
+                            dialMeshNode(payload.payload.username);
+                        }
+                    })
+                    .on('broadcast', { event: 'heartbeat-ping' }, (payload) => {
+                        if (payload.payload.username !== myUser && !activeGroupCalls[payload.payload.username]) {
+                            dialMeshNode(payload.payload.username);
+                        }
+                    })
+                    .subscribe(async (status) => {
+                        if (status === 'SUBSCRIBED') {
+                            // Announce presence immediately to everyone inside
+                            await groupRoomChannel.send({
+                                type: 'broadcast',
+                                event: 'join-announcement',
+                                payload: { username: myUser }
+                            });
+                        }
+                    });
+
+                // Periodically announce self to ensure newly arrived users capture our thread topology
+                activeGroupCalls["_pingInterval"] = setInterval(() => {
+                    groupRoomChannel.send({
+                        type: 'broadcast',
+                        event: 'heartbeat-ping',
+                        payload: { username: myUser }
+                    });
+                }, 3000);
+
+                updateStatus(`IN ROOM: ${currentRoomId.toUpperCase()}`, "#10b981");
+
+            } catch (e) {
+                console.error(e);
+                alert("Failed to establish video context profiles.");
+                leaveGroupRoom();
+            }
+        }
+
+        function dialMeshNode(targetPeerId) {
+            if (!localStream || !peer) return;
+            
+            const call = peer.call(targetPeerId, localStream);
+            activeGroupCalls[targetPeerId] = call;
+
+            call.on("stream", remoteStream => {
+                attachVideoPane(targetPeerId, remoteStream);
+            });
+            call.on("close", () => removeVideoPane(targetPeerId));
+            call.on("error", () => removeVideoPane(targetPeerId));
+        }
+
+        function attachVideoPane(peerId, stream, isLocal = false) {
+            // Ensure no duplicate video wrappers exist for this peer
+            if (document.getElementById(`vid-wrapper-${peerId}`)) return;
+
+            const grid = document.getElementById("groupVideoGrid");
+            const wrapper = document.createElement("div");
+            wrapper.id = `vid-wrapper-${peerId}`;
+            wrapper.className = `video-wrapper ${isLocal ? 'local-feed' : ''}`;
+
+            const video = document.createElement("video");
+            video.srcObject = stream;
+            video.autoplay = true;
+            video.playsInline = true;
+            if (isLocal) video.muted = true; // Avoid feedback loops from local microphone
+
+            const label = document.createElement("div");
+            label.className = "peer-tag";
+            label.innerText = isLocal ? `@${peerId} (You)` : `@${peerId}`;
+
+            wrapper.appendChild(video);
+            wrapper.appendChild(label);
+            grid.appendChild(wrapper);
+        }
+
+        function removeVideoPane(peerId) {
+            const pane = document.getElementById(`vid-wrapper-${peerId}`);
+            if (pane) pane.remove();
+            if (activeGroupCalls[peerId]) delete activeGroupCalls[peerId];
+        }
+
+        async function leaveGroupRoom() {
+            clearInterval(timerInterval);
+            if (activeGroupCalls["_pingInterval"]) clearInterval(activeGroupCalls["_pingInterval"]);
+
+            // Save historical footprint meta log trace
+            if (currentRoomId && seconds > 0) {
+                const elapsed = document.getElementById("callTimer").innerText;
+                await db.from("call_history").insert({
+                    caller_username: myUser,
+                    receiver_username: `room_${currentRoomId}`,
+                    status: 'CONNECTED',
+                    duration: elapsed
+                });
+            }
+
+            // Teardown network sockets, streams and elements
+            if (groupRoomChannel) groupRoomChannel.unsubscribe();
+            
+            Object.keys(activeGroupCalls).forEach(peerId => {
+                if (peerId !== "_pingInterval" && activeGroupCalls[peerId].close) {
+                    activeGroupCalls[peerId].close();
+                }
             });
 
-            if(call.peerConnection) {
-                call.peerConnection.oniceconnectionstatechange = () => {
-                    const state = call.peerConnection.iceConnectionState;
-                    if(state === "disconnected" || state === "failed" || state === "closed") {
-                        endCall("CONNECTED");
-                    }
-                };
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
             }
 
-            call.on("close", () => endCall("CONNECTED"));
-            call.on("error", () => endCall("CONNECTED"));
-        }
-
-        async function uiAnswer() {
-            if (!pendingCall) return;
-            document.getElementById("incomingOverlay").style.display = "none";
-            stopAudioTones();
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                document.getElementById("localVideoRenderer").srcObject = localStream;
-                
-                const workingCall = pendingCall;
-                pendingCall = null;
-                
-                workingCall.answer(localStream);
-                setupCallHandlers(workingCall, workingCall.peer);
-            } catch(e) {
-                console.error("Camera stream fallback error:", e);
-                uiReject();
-            }
-        }
-
-        async function uiReject() {
-            document.getElementById("incomingOverlay").style.display = "none";
-            stopAudioTones();
+            document.getElementById("groupVideoGrid").innerHTML = "";
+            document.getElementById("activeCallOverlay").style.display = "none";
             
-            if (pendingCall) {
-                const targetCaller = pendingCall.peer;
-                
-                await db.from("call_signals").insert({
-                    sender: myUser,
-                    receiver: targetCaller,
-                    type: 'REJECT'
-                });
+            currentRoomId = null;
+            seconds = 0;
+            isMuted = false;
+            isVideoStopped = false;
 
-                await db.from("call_history").insert({
-                    caller_username: targetCaller,
-                    receiver_username: myUser,
-                    status: 'REJECTED',
-                    duration: '00:00'
-                });
-                
-                pendingCall.close();
-                pendingCall = null;
-            }
+            document.getElementById("muteBtn").innerText = "🎤";
+            document.getElementById("muteBtn").style.background = "#475569";
+            document.getElementById("muteBtn").style.color = "white";
+            document.getElementById("videoToggleBtn").innerText = "📷";
+            document.getElementById("videoToggleBtn").style.background = "#475569";
+            document.getElementById("videoToggleBtn").style.color = "white";
+
             updateStatus("READY", "#94a3b8");
         }
 
@@ -487,59 +500,6 @@
             btn.style.color = isVideoStopped ? "black" : "white";
         }
 
-        async function endCall(resolutionState) {
-            stopAudioTones();
-            clearInterval(timerInterval);
-            
-            const elapsed = document.getElementById("callTimer").innerText;
-            
-            if (activeRemotePeer) {
-                const finalCaller = callIsOutbound ? myUser : activeRemotePeer;
-                const finalReceiver = callIsOutbound ? activeRemotePeer : myUser;
-                
-                await db.from("call_history").insert({
-                    caller_username: finalCaller,
-                    receiver_username: finalReceiver,
-                    status: resolutionState,
-                    duration: elapsed
-                });
-                activeRemotePeer = "";
-            }
-
-            if (currentCall) {
-                currentCall.close();
-                currentCall = null;
-            }
-            if (pendingCall) {
-                currentCall.close(); // Clean up core tracks
-                pendingCall = null;
-            }
-            if (localStream) {
-                localStream.getTracks().forEach(t => t.stop());
-                localStream = null;
-            }
-            
-            document.getElementById("remoteVideoRenderer").srcObject = null;
-            document.getElementById("localVideoRenderer").srcObject = null;
-            
-            document.getElementById("outgoingOverlay").style.display = "none";
-            document.getElementById("incomingOverlay").style.display = "none";
-            document.getElementById("activeCallOverlay").style.display = "none";
-            
-            isMuted = false;
-            isVideoStopped = false;
-            
-            document.getElementById("muteBtn").innerText = "🎤";
-            document.getElementById("muteBtn").style.background = "#475569";
-            document.getElementById("muteBtn").style.color = "white";
-            
-            document.getElementById("videoToggleBtn").innerText = "📷";
-            document.getElementById("videoToggleBtn").style.background = "#475569";
-            document.getElementById("videoToggleBtn").style.color = "white";
-
-            updateStatus("READY", "#94a3b8");
-        }
-
         function runTimer() {
             clearInterval(timerInterval); seconds = 0;
             document.getElementById("callTimer").innerText = "00:00";
@@ -549,10 +509,6 @@
                 const s = (seconds%60).toString().padStart(2,'0');
                 document.getElementById("callTimer").innerText = m + ":" + s;
             }, 1000);
-        }
-
-        function stopAudioTones() {
-            [inTone, outTone].forEach(t => { t.pause(); t.currentTime = 0; });
         }
 
         function updateStatus(txt, col) {
