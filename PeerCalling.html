@@ -81,7 +81,6 @@
     <div class="container">
         <div id="status-bar">CONNECTING...</div>
 
-        <!-- Authentication View Window -->
         <div id="login-panel">
             <h1 style="font-size: 36px; margin: 0 0 5px 0; color: var(--info);">VoiceLink Pro</h1>
             <p style="color: #94a3b8; margin-bottom: 25px; font-size: 14px;">Real-Time Unified Communications Gateway</p>
@@ -91,9 +90,7 @@
             <button class="secondary-btn" onclick="processAuth('REGISTER')">Create Account</button>
         </div>
 
-        <!-- Main Application Dashboard View Layout -->
         <div id="app-panel">
-            <!-- Left Side: Interactive Historical Logs -->
             <div class="sidebar">
                 <div class="pane-header">Call Log Ledger</div>
                 <div id="history-box" class="list-container">
@@ -101,14 +98,12 @@
                 </div>
             </div>
 
-            <!-- Right Side: Room Management & Directory -->
             <div class="main-content" style="padding-top: 23px;">
                 <header style="background: var(--card); padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155;">
                     <div id="me-label" style="font-weight: bold; color: var(--info); font-size: 16px;">@---</div>
                     <button class="danger-btn" onclick="logout()">Logout</button>
                 </header>
                 
-                <!-- Group Call Room Creation Toolbar -->
                 <div style="background: var(--card); padding: 15px; border-bottom: 1px solid #334155; display: flex; gap: 10px;">
                     <input id="roomInput" type="text" placeholder="Enter Room ID (e.g., lounge)" style="margin-bottom: 0; flex: 1; padding: 10px;">
                     <button class="primary-btn" style="width: auto; margin-bottom: 0; padding: 10px 20px;" onclick="joinGroupRoom()">JOIN ROOM</button>
@@ -119,13 +114,26 @@
             </div>
         </div>
 
-        <!-- Unified Interactive WebRTC Media Grid Canvas Overlay -->
+        <div id="outgoingCallOverlay" class="overlay" style="background: rgba(15, 23, 42, 0.96); display: none;">
+            <h2 style="font-size: 28px; margin-bottom: 5px; color: var(--info);">Calling...</h2>
+            <p id="outgoingTargetIdentity" style="font-size: 18px; color: #94a3b8; margin-bottom: 30px;">Ringing @username</p>
+            <div class="action-btns">
+                <button class="round-btn" style="background: var(--danger); width: 80px; height: 80px;" onclick="cancelOutgoingCall()">🛑</button>
+            </div>
+        </div>
+
+        <div id="incomingCallOverlay" class="overlay" style="background: rgba(15, 23, 42, 0.96); display: none;">
+            <h2 style="font-size: 28px; margin-bottom: 5px; color: var(--info);">Incoming Call...</h2>
+            <p id="callerIdentity" style="font-size: 18px; color: #94a3b8; margin-bottom: 30px;">@username is calling you</p>
+            <div class="action-btns">
+                <button class="round-btn" style="background: var(--accent); width: 80px; height: 80px;" onclick="acceptIncomingCall()">📞</button>
+                <button class="round-btn" style="background: var(--danger); width: 80px; height: 80px;" onclick="declineIncomingCall()">🛑</button>
+            </div>
+        </div>
+
         <div id="activeCallOverlay" class="overlay" style="justify-content: flex-end; background: #0b0f19;">
-            <!-- Target for runtime creation of video panes -->
             <div id="groupVideoGrid" class="video-grid-canvas"></div>
-            
             <div id="callTimer" class="timer" style="position: absolute; top: 10px; right: 20px; margin: 0;">00:00</div>
-            
             <div class="action-btns">
                 <button id="muteBtn" class="round-btn" style="background:#475569;" onclick="toggleMute()">🎤</button>
                 <button class="round-btn" style="background:var(--danger); width: 80px; height: 80px;" onclick="leaveGroupRoom()">🛑</button>
@@ -143,9 +151,13 @@
         let peer, localStream, timerInterval, realtimeChannel, heartbeatInterval, directoryPollInterval, groupRoomChannel;
         let seconds = 0, isMuted = false, isVideoStopped = false;
         let currentRoomId = null;
+        let targetIncomingRoomId = null; 
+        let activeRemoteTargetUser = null; 
         
-        // Tracks active peer connections within the mesh node matrix
         const activeGroupCalls = {}; 
+
+        const incomingTone = new Audio("incoming.mp3"); incomingTone.loop = true;
+        const outgoingTone = new Audio("outgoing.mp3"); outgoingTone.loop = true;
 
         window.addEventListener('DOMContentLoaded', () => {
             if (myUser) {
@@ -238,6 +250,45 @@
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'online_users' }, () => loadOnlineDirectory())
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_history' }, () => loadCallHistoryTable())
                 .subscribe();
+
+            db.channel(`pings_${myUser}`)
+                .on('broadcast', { event: 'ring-invite' }, (payload) => {
+                    if (!currentRoomId && !targetIncomingRoomId) {
+                        targetIncomingRoomId = payload.payload.roomId;
+                        activeRemoteTargetUser = payload.payload.from;
+                        document.getElementById("callerIdentity").innerText = `@${payload.payload.from} is calling you...`;
+                        document.getElementById("incomingCallOverlay").style.display = "flex";
+                        
+                        stopAllTones();
+                        incomingTone.play().catch(e => console.log("Audio awaiting user interaction:", e));
+                    }
+                })
+                .on('broadcast', { event: 'ring-cancel' }, () => {
+                    document.getElementById("incomingCallOverlay").style.display = "none";
+                    targetIncomingRoomId = null;
+                    activeRemoteTargetUser = null;
+                    stopAllTones();
+                })
+                .on('broadcast', { event: 'ring-decline' }, () => {
+                    document.getElementById("outgoingCallOverlay").style.display = "none";
+                    activeRemoteTargetUser = null;
+                    stopAllTones();
+                    alert("Call was declined.");
+                })
+                .on('broadcast', { event: 'ring-accept' }, (payload) => {
+                    // Receiver answered! Turn off calling overlay, stop audio, join video room
+                    document.getElementById("outgoingCallOverlay").style.display = "none";
+                    stopAllTones();
+                    joinSpecificGroup(payload.payload.roomId);
+                })
+                .subscribe();
+        }
+
+        function stopAllTones() {
+            [incomingTone, outgoingTone].forEach(tone => {
+                tone.pause();
+                tone.currentTime = 0;
+            });
         }
 
         async function loadOnlineDirectory() {
@@ -347,17 +398,95 @@
                 }
                 
                 call.answer(localStream);
-                call.on("stream", remoteStream => attachVideoPane(call.peer, remoteStream));
+                call.on("stream", remoteStream => {
+                    stopAllTones(); 
+                    attachVideoPane(call.peer, remoteStream);
+                });
                 call.on("close", () => removeVideoPane(call.peer));
                 activeGroupCalls[call.peer] = call;
             });
         }
 
-        /* 1-on-1 Interaction Router */
-        function startPrivateCall(targetUsername) {
-            // Generates a deterministically sorted room identifier signature based on credentials
-            const privateRoomId = "priv-" + [myUser, targetUsername].sort().join("-");
-            joinSpecificGroup(privateRoomId);
+        /* Outgoing Signaling Operations */
+        async function startPrivateCall(targetUsername) {
+            const generatedRoomId = "priv-" + [myUser, targetUsername].sort().join("-");
+            activeRemoteTargetUser = targetUsername;
+            
+            document.getElementById("outgoingTargetIdentity").innerText = `Ringing @${targetUsername}...`;
+            document.getElementById("outgoingCallOverlay").style.display = "flex";
+            
+            stopAllTones();
+            outgoingTone.play().catch(e => console.log("Audio playback delayed:", e));
+            
+            const pingChannel = db.channel(`pings_${targetUsername}`);
+            pingChannel.subscribe(async (status) => {
+                if (status === 'SUBSCRIBED') {
+                    await pingChannel.send({
+                        type: 'broadcast',
+                        event: 'ring-invite',
+                        payload: { from: myUser, roomId: generatedRoomId }
+                    });
+                }
+            });
+        }
+
+        async function cancelOutgoingCall() {
+            document.getElementById("outgoingCallOverlay").style.display = "none";
+            stopAllTones();
+            if (activeRemoteTargetUser) {
+                const cancelChannel = db.channel(`pings_${activeRemoteTargetUser}`);
+                cancelChannel.subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        await cancelChannel.send({
+                            type: 'broadcast',
+                            event: 'ring-cancel',
+                            payload: { from: myUser }
+                        });
+                    }
+                });
+            }
+            activeRemoteTargetUser = null;
+        }
+
+        /* Incoming Signaling Operations */
+        async function acceptIncomingCall() {
+            if (targetIncomingRoomId && activeRemoteTargetUser) {
+                stopAllTones();
+                document.getElementById("incomingCallOverlay").style.display = "none";
+                
+                const acceptChannel = db.channel(`pings_${activeRemoteTargetUser}`);
+                acceptChannel.subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        await acceptChannel.send({
+                            type: 'broadcast',
+                            event: 'ring-accept',
+                            payload: { roomId: targetIncomingRoomId, from: myUser }
+                        });
+                        
+                        joinSpecificGroup(targetIncomingRoomId);
+                        targetIncomingRoomId = null;
+                    }
+                });
+            }
+        }
+
+        async function declineIncomingCall() {
+            stopAllTones();
+            document.getElementById("incomingCallOverlay").style.display = "none";
+            if (activeRemoteTargetUser) {
+                const rejectChannel = db.channel(`pings_${activeRemoteTargetUser}`);
+                rejectChannel.subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        await rejectChannel.send({
+                            type: 'broadcast',
+                            event: 'ring-decline',
+                            payload: { from: myUser }
+                        });
+                    }
+                });
+            }
+            targetIncomingRoomId = null;
+            activeRemoteTargetUser = null;
         }
 
         function joinSpecificGroup(roomId) {
@@ -381,7 +510,6 @@
                 attachVideoPane(myUser, localStream, true);
                 runTimer();
 
-                // Explicitly bind the online session row instance out into the global scope context
                 await db.from("online_users").upsert({ username: myUser, last_seen: new Date().toISOString(), current_room: currentRoomId });
 
                 groupRoomChannel = db.channel(`mesh_${currentRoomId}`);
@@ -418,7 +546,7 @@
 
             } catch (e) {
                 console.error(e);
-                alert("Failed to secure active multimedia tracking hardware context pipelines.");
+                alert("Failed to secure active multimedia tracking hardware pipelines.");
                 leaveGroupRoom();
             }
         }
@@ -429,7 +557,10 @@
             const call = peer.call(targetPeerId, localStream);
             activeGroupCalls[targetPeerId] = call;
 
-            call.on("stream", remoteStream => attachVideoPane(targetPeerId, remoteStream));
+            call.on("stream", remoteStream => {
+                stopAllTones(); 
+                attachVideoPane(targetPeerId, remoteStream);
+            });
             call.on("close", () => removeVideoPane(targetPeerId));
             call.on("error", () => removeVideoPane(targetPeerId));
         }
@@ -461,9 +592,14 @@
             const pane = document.getElementById(`vid-wrapper-${peerId}`);
             if (pane) pane.remove();
             if (activeGroupCalls[peerId]) delete activeGroupCalls[peerId];
+            
+            if (currentRoomId && currentRoomId.startsWith("priv-") && Object.keys(activeGroupCalls).length <= 1) {
+                leaveGroupRoom();
+            }
         }
 
         async function leaveGroupRoom() {
+            stopAllTones();
             clearInterval(timerInterval);
             if (activeGroupCalls["_pingInterval"]) clearInterval(activeGroupCalls["_pingInterval"]);
 
@@ -503,6 +639,7 @@
             seconds = 0;
             isMuted = false;
             isVideoStopped = false;
+            activeRemoteTargetUser = null;
 
             document.getElementById("muteBtn").innerText = "🎤";
             document.getElementById("muteBtn").style.background = "#475569";
